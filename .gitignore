@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+backend/venv/
+.venv/
+
+# Environment files
+.env
+backend/.env
+
+# Mac files
+.DS_Store
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+
+# Audio/temp files
+*.mp3
+*.wav
+*.m4a

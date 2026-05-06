@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Nova Voice AI Console</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <div class="bg-grid"></div>
+    <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div>
+
+    <header class="topbar glass">
+      <div class="brand-wrap">
+        <div class="brand-icon">◎</div>
+        <div>
+          <h1>Nova Voice AI Console</h1>
+          <p class="brand-subtitle">Bidirectional Speech-to-Speech Translation Dashboard</p>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <div class="live-pill">
+          <span class="live-dot"></span>
+          <span>System Live</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="dashboard">
+      <section class="hero glass">
+        <div class="hero-left">
+          <p class="eyebrow">Enterprise Voice Intelligence</p>
+          <h2>Bidirectional AI Interpretation Console</h2>
+          <p class="hero-text" id="subtitle">
+            Pathway A: Client → Representative | Arabic → Urdu
+          </p>
+
+          <div class="hero-metrics">
+            <div class="metric-card">
+              <span class="metric-label">Active Pathway</span>
+              <span class="metric-value" id="pathwayMetric">A</span>
+            </div>
+
+            <div class="metric-card">
+              <span class="metric-label">Source</span>
+              <span class="metric-value" id="sourceMetric">Arabic</span>
+            </div>
+
+            <div class="metric-card">
+              <span class="metric-label">Target</span>
+              <span class="metric-value" id="targetMetric">Urdu</span>
+            </div>
+
+            <div class="metric-card">
+              <span class="metric-label">Total Turns</span>
+              <span class="metric-value" id="totalTurnsMetric">0</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="hero-right">
+          <div class="voice-orb-wrap">
+            <div class="voice-orb" id="voiceOrb">
+              <div class="voice-orb-core"></div>
+            </div>
+            <p class="voice-orb-label" id="orbLabel">System Ready</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="performance-panel glass">
+        <div class="performance-card">
+          <span class="performance-label">Call Timer</span>
+          <span class="performance-value" id="callTimer">00:00</span>
+        </div>
+
+        <div class="performance-card">
+          <span class="performance-label">Translation Latency</span>
+          <span class="performance-value" id="translationLatency">0 ms</span>
+        </div>
+
+        <div class="performance-card">
+          <span class="performance-label">TTS Latency</span>
+          <span class="performance-value" id="ttsLatency">0 ms</span>
+        </div>
+
+        <div class="performance-card">
+          <span class="performance-label">Total Latency</span>
+          <span class="performance-value" id="totalLatency">0 ms</span>
+        </div>
+
+        <div class="performance-card confidence-card">
+          <span class="performance-label">Confidence</span>
+          <span class="performance-value" id="confidenceScore">0%</span>
+          <div class="confidence-track">
+            <div class="confidence-fill" id="confidenceFill"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="pathway-panel glass">
+        <div class="pathway-header">
+          <div>
+            <p class="panel-tag">Call Direction</p>
+            <h3>Choose Translation Pathway</h3>
+          </div>
+          <div class="pathway-mode" id="activePathwayLabel">Pathway A Active</div>
+        </div>
+
+        <div class="pathway-grid">
+          <button id="pathwayABtn" class="pathway-card active">
+            <span class="pathway-title">Pathway A</span>
+            <span class="pathway-main">Client → Representative</span>
+            <span class="pathway-desc">
+              Arabic client speech translated into Urdu/English for the representative.
+            </span>
+          </button>
+
+          <button id="pathwayBBtn" class="pathway-card">
+            <span class="pathway-title">Pathway B</span>
+            <span class="pathway-main">Representative → Client</span>
+            <span class="pathway-desc">
+              Representative Urdu/English speech translated into Arabic for the client.
+            </span>
+          </button>
+        </div>
+      </section>
+
+      <section class="controls-panel glass">
+        <div class="controls-row">
+          <button id="startBtn" class="btn btn-primary">🎙 Start Listening</button>
+          <button id="stopBtn" class="btn btn-danger">⏹ Stop</button>
+          <button id="translateBtn" class="btn btn-secondary">🔁 Translate Typed Text</button>
+          <button id="speakBtn" class="btn btn-secondary">🔊 Play Translation</button>
+          <button id="clearBtn" class="btn btn-ghost">🧹 Clear History</button>
+        </div>
+
+        <div class="settings-row">
+          <div class="field-group">
+            <label for="sourceLanguage">Source Language</label>
+            <select id="sourceLanguage">
+              <option value="Arabic">Arabic</option>
+              <option value="English">English</option>
+              <option value="Urdu">Urdu</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label for="targetLanguage">Target Language</label>
+            <select id="targetLanguage">
+              <option value="Urdu">Urdu</option>
+              <option value="English">English</option>
+              <option value="Arabic">Arabic</option>
+            </select>
+          </div>
+
+          <div class="status-box">
+            <span class="status-label">System Status</span>
+            <div class="status-pill status-ready" id="statusPill">
+              <span class="status-dot"></span>
+              <span id="status">Ready</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panels-grid">
+        <div class="panel glass">
+          <div class="panel-header">
+            <div>
+              <p class="panel-tag" id="inputPanelTag">Client Input Stream</p>
+              <h3 id="inputPanelTitle">Client Speech</h3>
+            </div>
+            <div class="panel-badge">ASR</div>
+          </div>
+          <textarea id="originalText" placeholder="Client or representative speech will appear here..."></textarea>
+        </div>
+
+        <div class="panel glass">
+          <div class="panel-header">
+            <div>
+              <p class="panel-tag" id="outputPanelTag">Representative Output Stream</p>
+              <h3 id="outputPanelTitle">Translation for Representative</h3>
+            </div>
+            <div class="panel-badge accent">TTS</div>
+          </div>
+          <textarea id="translatedText" placeholder="Translated output will appear here..."></textarea>
+        </div>
+      </section>
+
+      <section class="history-panel glass">
+        <div class="history-topbar">
+          <div>
+            <p class="panel-tag">Session Memory</p>
+            <h3>Bidirectional Conversation History</h3>
+          </div>
+          <div class="history-count" id="turnCount">0 turns</div>
+        </div>
+
+        <div id="conversationHistory" class="conversation-history">
+          <div class="empty-history">
+            <div class="empty-icon">◌</div>
+            <p>No conversation yet. Start speaking to populate the live transcript history.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

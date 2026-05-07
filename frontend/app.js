@@ -3,6 +3,8 @@ const stopBtn = document.getElementById("stopBtn");
 const speakBtn = document.getElementById("speakBtn");
 const translateBtn = document.getElementById("translateBtn");
 const clearBtn = document.getElementById("clearBtn");
+const exportTxtBtn = document.getElementById("exportTxtBtn");
+const exportJsonBtn = document.getElementById("exportJsonBtn");
 
 const pathwayABtn = document.getElementById("pathwayABtn");
 const pathwayBBtn = document.getElementById("pathwayBBtn");
@@ -49,6 +51,9 @@ const piiTypes = document.getElementById("piiTypes");
 let recognition;
 let totalTurns = 0;
 let activePathway = "A";
+let sessionEntries = [];
+
+const sessionId = `s2s-session-${new Date().toISOString().replace(/[:.]/g, "-")}`;
 
 let callStartTime = null;
 let callTimerInterval = null;
@@ -331,6 +336,34 @@ function addConversationEntry(
   item.className = "history-item";
 
   const time = new Date().toLocaleTimeString();
+  const isoTime = new Date().toISOString();
+
+  const sessionEntry = {
+    session_id: sessionId,
+    turn: totalTurns,
+    timestamp: isoTime,
+    display_time: time,
+    pathway: activePathway,
+    speaker: speaker,
+    destination: destination,
+    speaker_role_setting: speakerRole.value,
+    source_language: sourceLang,
+    target_language: targetLang,
+    arabic_dialect: dialect,
+    original_text: original,
+    masked_text: maskedText,
+    translated_text: translation,
+    pii_found: piiFound,
+    detected_pii: detectedPii || [],
+    metrics: {
+      translation_latency_ms: metrics.translationLatencyMs,
+      tts_latency_ms: metrics.ttsLatencyMs,
+      total_latency_ms: metrics.totalLatencyMs,
+      confidence: metrics.confidence
+    }
+  };
+
+  sessionEntries.push(sessionEntry);
 
   const piiBadgeHtml = piiFound
     ? `<span class="pii-badge">PII: ${escapeHtml(formatPIITypes(detectedPii))}</span>`
@@ -573,6 +606,100 @@ function setRecognitionLanguage() {
   }
 }
 
+function downloadFile(filename, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function exportSessionAsJSON() {
+  if (sessionEntries.length === 0) {
+    alert("No session data to export.");
+    return;
+  }
+
+  const exportData = {
+    session_id: sessionId,
+    exported_at: new Date().toISOString(),
+    total_turns: sessionEntries.length,
+    current_pathway: activePathway,
+    source_language: sourceLanguage.value,
+    target_language: targetLanguage.value,
+    arabic_dialect: arabicDialect.value,
+    speaker_role: speakerRole.value,
+    entries: sessionEntries
+  };
+
+  const jsonContent = JSON.stringify(exportData, null, 2);
+
+  downloadFile(
+    `${sessionId}.json`,
+    jsonContent,
+    "application/json"
+  );
+
+  setSystemStatus("JSON session exported", "ready");
+}
+
+function exportSessionAsTXT() {
+  if (sessionEntries.length === 0) {
+    alert("No transcript to export.");
+    return;
+  }
+
+  let txt = "";
+
+  txt += "Nova Voice AI Console - Session Transcript\n";
+  txt += "================================================\n\n";
+  txt += `Session ID: ${sessionId}\n`;
+  txt += `Exported At: ${new Date().toISOString()}\n`;
+  txt += `Total Turns: ${sessionEntries.length}\n\n`;
+
+  txt += "Transcript\n";
+  txt += "================================================\n\n";
+
+  sessionEntries.forEach((entry) => {
+    txt += `Turn ${entry.turn}\n`;
+    txt += `Time: ${entry.display_time}\n`;
+    txt += `Pathway: ${entry.pathway}\n`;
+    txt += `Speaker: ${entry.speaker}\n`;
+    txt += `For: ${entry.destination}\n`;
+    txt += `Language: ${entry.source_language} → ${entry.target_language}\n`;
+    txt += `Arabic Dialect: ${entry.arabic_dialect}\n`;
+    txt += `PII Found: ${entry.pii_found ? "Yes" : "No"}\n`;
+
+    if (entry.pii_found) {
+      txt += `Detected PII: ${entry.detected_pii.join(", ")}\n`;
+      txt += `Masked Text Sent to Translation:\n${entry.masked_text}\n\n`;
+    }
+
+    txt += `Translation Latency: ${entry.metrics.translation_latency_ms} ms\n`;
+    txt += `TTS Latency: ${entry.metrics.tts_latency_ms} ms\n`;
+    txt += `Total Latency: ${entry.metrics.total_latency_ms} ms\n`;
+    txt += `Confidence: ${entry.metrics.confidence}%\n\n`;
+
+    txt += `Original:\n${entry.original_text}\n\n`;
+    txt += `Translation:\n${entry.translated_text}\n\n`;
+    txt += "------------------------------------------------\n\n";
+  });
+
+  downloadFile(
+    `${sessionId}.txt`,
+    txt,
+    "text/plain"
+  );
+
+  setSystemStatus("TXT transcript exported", "ready");
+}
+
 startBtn.onclick = () => {
   if (!recognition) {
     alert("Speech recognition not supported. Please use Google Chrome.");
@@ -622,8 +749,17 @@ speakBtn.onclick = async () => {
   ttsLatency.innerText = `${result.ttsLatencyMs} ms`;
 };
 
+exportTxtBtn.onclick = () => {
+  exportSessionAsTXT();
+};
+
+exportJsonBtn.onclick = () => {
+  exportSessionAsJSON();
+};
+
 clearBtn.onclick = () => {
   totalTurns = 0;
+  sessionEntries = [];
   turnCount.innerText = "0 turns";
 
   stopCallTimer();

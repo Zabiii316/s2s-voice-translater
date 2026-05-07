@@ -10,6 +10,8 @@
   --success: #22c55e;
   --danger: #ef4444;
   --warning: #f59e0b;
+  --purple: #a855f7;
+  --pink: #ec4899;
   --shadow: 0 15px 40px rgba(0, 0, 0, 0.35);
   --radius-xl: 24px;
   --radius-lg: 18px;
@@ -150,9 +152,20 @@ body {
 }
 
 @keyframes pulseDot {
-  0% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.35); opacity: 0.65; }
-  100% { transform: scale(1); opacity: 1; }
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  50% {
+    transform: scale(1.35);
+    opacity: 0.65;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .dashboard {
@@ -228,7 +241,7 @@ body {
   border-radius: var(--radius-xl);
   padding: 22px;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 14px;
 }
 
@@ -247,6 +260,25 @@ body {
   border-radius: 999px;
   background: linear-gradient(90deg, var(--warning), var(--success));
   transition: width 0.4s ease;
+}
+
+.pii-card {
+  position: relative;
+}
+
+.pii-mini-text {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pii-safe {
+  color: #d7ffe2;
+}
+
+.pii-warning {
+  color: #ffd6a5;
 }
 
 .hero-right {
@@ -305,9 +337,17 @@ body {
 }
 
 @keyframes orbPulse {
-  0% { transform: scale(1); }
-  50% { transform: scale(1.06); }
-  100% { transform: scale(1); }
+  0% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.06);
+  }
+
+  100% {
+    transform: scale(1);
+  }
 }
 
 .voice-orb-label {
@@ -476,6 +516,11 @@ select {
 select option {
   background: #0b1728;
   color: white;
+}
+
+select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .status-box {
@@ -670,7 +715,10 @@ textarea::placeholder {
 
 .language-badge,
 .latency-badge,
-.confidence-badge {
+.confidence-badge,
+.dialect-badge,
+.role-badge,
+.pii-badge {
   border-radius: 999px;
   padding: 7px 12px;
   font-size: 12px;
@@ -693,6 +741,24 @@ textarea::placeholder {
   background: rgba(34, 197, 94, 0.11);
   border: 1px solid rgba(34, 197, 94, 0.20);
   color: #d7ffe2;
+}
+
+.dialect-badge {
+  background: rgba(168, 85, 247, 0.11);
+  border: 1px solid rgba(168, 85, 247, 0.24);
+  color: #f1ddff;
+}
+
+.role-badge {
+  background: rgba(236, 72, 153, 0.11);
+  border: 1px solid rgba(236, 72, 153, 0.24);
+  color: #ffd8ef;
+}
+
+.pii-badge {
+  background: rgba(239, 68, 68, 0.11);
+  border: 1px solid rgba(239, 68, 68, 0.24);
+  color: #ffd6d6;
 }
 
 .speaker-badge {
@@ -740,13 +806,20 @@ textarea::placeholder {
   line-height: 1.6;
 }
 
-@media (max-width: 1200px) {
-  .performance-panel {
-    grid-template-columns: repeat(2, 1fr);
-  }
+.masked-text-box {
+  color: #fff1cf;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.16);
+  padding: 12px;
+  border-radius: 12px;
+  font-size: 15px;
+  line-height: 1.5;
+  margin-top: 6px;
+}
 
-  .confidence-card {
-    grid-column: span 2;
+@media (max-width: 1300px) {
+  .performance-panel {
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
@@ -756,6 +829,10 @@ textarea::placeholder {
   }
 
   .hero-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .performance-panel {
     grid-template-columns: repeat(2, 1fr);
   }
 
@@ -797,10 +874,6 @@ textarea::placeholder {
   .hero-metrics,
   .performance-panel {
     grid-template-columns: 1fr;
-  }
-
-  .confidence-card {
-    grid-column: span 1;
   }
 
   .voice-orb {

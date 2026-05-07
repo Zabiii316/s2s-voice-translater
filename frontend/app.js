@@ -14,6 +14,9 @@ const statusText = document.getElementById("status");
 
 const sourceLanguage = document.getElementById("sourceLanguage");
 const targetLanguage = document.getElementById("targetLanguage");
+const arabicDialect = document.getElementById("arabicDialect");
+const speakerRole = document.getElementById("speakerRole");
+
 const subtitle = document.getElementById("subtitle");
 
 const conversationHistory = document.getElementById("conversationHistory");
@@ -22,7 +25,7 @@ const turnCount = document.getElementById("turnCount");
 const sourceMetric = document.getElementById("sourceMetric");
 const targetMetric = document.getElementById("targetMetric");
 const pathwayMetric = document.getElementById("pathwayMetric");
-const totalTurnsMetric = document.getElementById("totalTurnsMetric");
+const dialectMetric = document.getElementById("dialectMetric");
 
 const statusPill = document.getElementById("statusPill");
 const voiceOrb = document.getElementById("voiceOrb");
@@ -39,6 +42,9 @@ const ttsLatency = document.getElementById("ttsLatency");
 const totalLatency = document.getElementById("totalLatency");
 const confidenceScore = document.getElementById("confidenceScore");
 const confidenceFill = document.getElementById("confidenceFill");
+
+const piiStatus = document.getElementById("piiStatus");
+const piiTypes = document.getElementById("piiTypes");
 
 let recognition;
 let totalTurns = 0;
@@ -59,6 +65,7 @@ const pathwayConfig = {
     destination: "Representative",
     source: "Arabic",
     target: "Urdu",
+    dialect: "Gulf Arabic",
     inputTag: "Client Input Stream",
     inputTitle: "Client Speech",
     outputTag: "Representative Output Stream",
@@ -72,6 +79,7 @@ const pathwayConfig = {
     destination: "Client",
     source: "English",
     target: "Arabic",
+    dialect: "MSA",
     inputTag: "Representative Input Stream",
     inputTitle: "Representative Speech",
     outputTag: "Client Output Stream",
@@ -79,12 +87,58 @@ const pathwayConfig = {
   }
 };
 
+function shortDialectName(value) {
+  if (value === "Gulf Arabic") return "Gulf";
+  if (value === "Egyptian Arabic") return "Egyptian";
+  if (value === "Levantine Arabic") return "Levantine";
+  return "MSA";
+}
+
+function isArabicInvolved() {
+  return sourceLanguage.value === "Arabic" || targetLanguage.value === "Arabic";
+}
+
+function updateDialectAvailability() {
+  const arabicActive = isArabicInvolved();
+  arabicDialect.disabled = !arabicActive;
+
+  if (!arabicActive) {
+    dialectMetric.innerText = "N/A";
+  } else {
+    dialectMetric.innerText = shortDialectName(arabicDialect.value);
+  }
+}
+
+function getCurrentSpeaker() {
+  if (speakerRole.value !== "Auto") {
+    return speakerRole.value;
+  }
+
+  return pathwayConfig[activePathway].speaker;
+}
+
+function getCurrentDestination() {
+  const currentSpeaker = getCurrentSpeaker();
+
+  if (currentSpeaker === "Client") {
+    return "Representative";
+  }
+
+  if (currentSpeaker === "Representative") {
+    return "Client";
+  }
+
+  return pathwayConfig[activePathway].destination;
+}
+
 function setPathway(pathway) {
   activePathway = pathway;
   const config = pathwayConfig[pathway];
 
   sourceLanguage.value = config.source;
   targetLanguage.value = config.target;
+  arabicDialect.value = config.dialect;
+  speakerRole.value = "Auto";
 
   pathwayABtn.classList.toggle("active", pathway === "A");
   pathwayBBtn.classList.toggle("active", pathway === "B");
@@ -101,15 +155,20 @@ function setPathway(pathway) {
   translatedText.value = "";
 
   updateSubtitle();
+  updateDialectAvailability();
   setSystemStatus(`${config.label} selected`, "ready");
 }
 
 function updateSubtitle() {
   const config = pathwayConfig[activePathway];
 
-  subtitle.innerText = `${config.subtitle} | Current: ${sourceLanguage.value} → ${targetLanguage.value}`;
+  subtitle.innerText =
+    `${config.subtitle} | Current: ${sourceLanguage.value} → ${targetLanguage.value} | Dialect: ${shortDialectName(arabicDialect.value)}`;
+
   sourceMetric.innerText = sourceLanguage.value;
   targetMetric.innerText = targetLanguage.value;
+
+  updateDialectAvailability();
 }
 
 function setSystemStatus(message, type = "ready") {
@@ -127,7 +186,7 @@ function setSystemStatus(message, type = "ready") {
   if (type === "listening") {
     orbLabel.innerText = "Listening for speech...";
   } else if (type === "translating") {
-    orbLabel.innerText = "Translating in real time...";
+    orbLabel.innerText = `Translating with ${shortDialectName(arabicDialect.value)} Arabic context...`;
   } else if (type === "speaking") {
     orbLabel.innerText = "Playing translated audio...";
   } else if (type === "error") {
@@ -164,6 +223,21 @@ function resetPerformanceMetrics() {
   totalLatency.innerText = "0 ms";
   confidenceScore.innerText = "0%";
   confidenceFill.style.width = "0%";
+  piiStatus.innerText = "Clear";
+  piiStatus.className = "performance-value pii-safe";
+  piiTypes.innerText = "No sensitive data detected";
+}
+
+function updatePIIStatus(piiFound, detectedPii) {
+  if (piiFound) {
+    piiStatus.innerText = "Detected";
+    piiStatus.className = "performance-value pii-warning";
+    piiTypes.innerText = detectedPii.join(", ");
+  } else {
+    piiStatus.innerText = "Clear";
+    piiStatus.className = "performance-value pii-safe";
+    piiTypes.innerText = "No sensitive data detected";
+  }
 }
 
 function updatePerformanceMetrics(metrics) {
@@ -174,7 +248,7 @@ function updatePerformanceMetrics(metrics) {
   confidenceFill.style.width = `${metrics.confidence}%`;
 }
 
-function calculateConfidence(original, translation, sourceLang, targetLang) {
+function calculateConfidence(original, translation, sourceLang, targetLang, piiFound) {
   if (!translation || translation.trim() === "") return 0;
 
   const lowerTranslation = translation.toLowerCase();
@@ -184,13 +258,21 @@ function calculateConfidence(original, translation, sourceLang, targetLang) {
     lowerTranslation.includes("[mock") ||
     lowerTranslation.includes("translation]")
   ) {
-    return 58;
+    return piiFound ? 50 : 58;
   }
 
   let score = 94;
 
-  if (sourceLang === "Arabic" || sourceLang === "Urdu") {
-    score -= 4;
+  if (sourceLang === "Arabic" || targetLang === "Arabic") {
+    score -= 2;
+  }
+
+  if (arabicDialect.value !== "MSA") {
+    score -= 2;
+  }
+
+  if (piiFound) {
+    score -= 5;
   }
 
   if (original.length < 6) {
@@ -201,11 +283,13 @@ function calculateConfidence(original, translation, sourceLang, targetLang) {
     score -= 8;
   }
 
-  return Math.max(65, Math.min(score, 97));
+  return Math.max(60, Math.min(score, 97));
 }
 
 sourceLanguage.onchange = updateSubtitle;
 targetLanguage.onchange = updateSubtitle;
+arabicDialect.onchange = updateSubtitle;
+speakerRole.onchange = updateSubtitle;
 
 pathwayABtn.onclick = () => setPathway("A");
 pathwayBBtn.onclick = () => setPathway("B");
@@ -216,8 +300,24 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-function addConversationEntry(original, translation, sourceLang, targetLang, metrics) {
-  const config = pathwayConfig[activePathway];
+function formatPIITypes(types) {
+  if (!types || types.length === 0) return "None";
+  return types.join(", ");
+}
+
+function addConversationEntry(
+  original,
+  maskedText,
+  translation,
+  sourceLang,
+  targetLang,
+  dialect,
+  piiFound,
+  detectedPii,
+  metrics
+) {
+  const speaker = getCurrentSpeaker();
+  const destination = getCurrentDestination();
 
   const emptyHistory = document.querySelector(".empty-history");
   if (emptyHistory) {
@@ -226,12 +326,22 @@ function addConversationEntry(original, translation, sourceLang, targetLang, met
 
   totalTurns += 1;
   turnCount.innerText = `${totalTurns} turn${totalTurns > 1 ? "s" : ""}`;
-  totalTurnsMetric.innerText = totalTurns;
 
   const item = document.createElement("div");
   item.className = "history-item";
 
   const time = new Date().toLocaleTimeString();
+
+  const piiBadgeHtml = piiFound
+    ? `<span class="pii-badge">PII: ${escapeHtml(formatPIITypes(detectedPii))}</span>`
+    : `<span class="confidence-badge">PII Clear</span>`;
+
+  const maskedTextHtml = piiFound
+    ? `
+      <div class="history-label">Masked Text Sent to Translation</div>
+      <div class="masked-text-box">${escapeHtml(maskedText)}</div>
+    `
+    : "";
 
   item.innerHTML = `
     <div class="history-top">
@@ -239,20 +349,25 @@ function addConversationEntry(original, translation, sourceLang, targetLang, met
         <span>Turn ${totalTurns} • ${time}</span>
         <span class="language-badge">Pathway ${activePathway}</span>
         <span class="language-badge">${sourceLang} → ${targetLang}</span>
+        <span class="dialect-badge">Dialect: ${escapeHtml(dialect)}</span>
       </div>
 
       <div class="history-meta-row">
-        <span class="speaker-badge">${config.speaker} Said</span>
-        <span class="destination-badge">For ${config.destination}</span>
+        <span class="speaker-badge">${escapeHtml(speaker)} Said</span>
+        <span class="destination-badge">For ${escapeHtml(destination)}</span>
+        <span class="role-badge">Role: ${escapeHtml(speakerRole.value)}</span>
         <span class="latency-badge">Total ${metrics.totalLatencyMs} ms</span>
         <span class="confidence-badge">Confidence ${metrics.confidence}%</span>
+        ${piiBadgeHtml}
       </div>
     </div>
 
-    <div class="history-label">${config.speaker} Original</div>
+    <div class="history-label">${escapeHtml(speaker)} Original</div>
     <div class="history-original">${escapeHtml(original)}</div>
 
-    <div class="history-label">AI Translation for ${config.destination}</div>
+    ${maskedTextHtml}
+
+    <div class="history-label">AI Translation for ${escapeHtml(destination)}</div>
     <div class="history-translation">${escapeHtml(translation)}</div>
   `;
 
@@ -334,6 +449,9 @@ async function translateText(text, autoSpeak = false) {
         text: text,
         source_language: sourceLanguage.value,
         target_language: targetLanguage.value,
+        arabic_dialect: arabicDialect.value,
+        speaker_role: getCurrentSpeaker(),
+        pathway: activePathway
       }),
     });
 
@@ -348,6 +466,8 @@ async function translateText(text, autoSpeak = false) {
     translatedText.value = data.translated_text;
     setSystemStatus("Translation complete", "ready");
 
+    updatePIIStatus(data.pii_found, data.detected_pii);
+
     let ttsResult = { ttsLatencyMs: 0 };
 
     if (autoSpeak) {
@@ -360,7 +480,8 @@ async function translateText(text, autoSpeak = false) {
       data.original_text,
       data.translated_text,
       data.source_language,
-      data.target_language
+      data.target_language,
+      data.pii_found
     );
 
     const metrics = {
@@ -374,9 +495,13 @@ async function translateText(text, autoSpeak = false) {
 
     addConversationEntry(
       data.original_text,
+      data.masked_text,
       data.translated_text,
       data.source_language,
       data.target_language,
+      data.arabic_dialect,
+      data.pii_found,
+      data.detected_pii,
       metrics
     );
   } catch (error) {
@@ -500,7 +625,6 @@ speakBtn.onclick = async () => {
 clearBtn.onclick = () => {
   totalTurns = 0;
   turnCount.innerText = "0 turns";
-  totalTurnsMetric.innerText = "0";
 
   stopCallTimer();
   callStartTime = null;

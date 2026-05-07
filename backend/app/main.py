@@ -2,12 +2,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from app.services.translation_service import TranslationService
+from app.services.pii_service import PIIService
 from gtts import gTTS
 from io import BytesIO
 
 app = FastAPI(title="S2S Voice Translator Backend")
 
-# Allow frontend to call backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,6 +17,7 @@ app.add_middleware(
 )
 
 translator = TranslationService()
+pii_service = PIIService()
 
 
 @app.get("/")
@@ -32,20 +33,28 @@ def translate(payload: dict):
         text = payload.get("text", "")
         source_language = payload.get("source_language", "English")
         target_language = payload.get("target_language", "Urdu")
+        arabic_dialect = payload.get("arabic_dialect", "MSA")
 
         if not text:
             raise HTTPException(status_code=400, detail="Text is required")
 
+        pii_result = pii_service.mask_text(text)
+
         translated_text = translator.translate(
-            text=text,
+            text=pii_result["masked_text"],
             source_language=source_language,
-            target_language=target_language
+            target_language=target_language,
+            arabic_dialect=arabic_dialect
         )
 
         return {
             "original_text": text,
+            "masked_text": pii_result["masked_text"],
+            "pii_found": pii_result["pii_found"],
+            "detected_pii": pii_result["detected_pii"],
             "source_language": source_language,
             "target_language": target_language,
+            "arabic_dialect": arabic_dialect,
             "translated_text": translated_text
         }
 

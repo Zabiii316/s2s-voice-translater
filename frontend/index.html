@@ -55,8 +55,8 @@
             </div>
 
             <div class="metric-card">
-              <span class="metric-label">Total Turns</span>
-              <span class="metric-value" id="totalTurnsMetric">0</span>
+              <span class="metric-label">Arabic Dialect</span>
+              <span class="metric-value" id="dialectMetric">Gulf</span>
             </div>
           </div>
         </div>
@@ -98,6 +98,12 @@
           <div class="confidence-track">
             <div class="confidence-fill" id="confidenceFill"></div>
           </div>
+        </div>
+
+        <div class="performance-card pii-card">
+          <span class="performance-label">PII Status</span>
+          <span class="performance-value pii-safe" id="piiStatus">Clear</span>
+          <div class="pii-mini-text" id="piiTypes">No sensitive data detected</div>
         </div>
       </section>
 
@@ -154,6 +160,25 @@
               <option value="Urdu">Urdu</option>
               <option value="English">English</option>
               <option value="Arabic">Arabic</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label for="arabicDialect">Arabic Dialect</label>
+            <select id="arabicDialect">
+              <option value="MSA">MSA</option>
+              <option value="Gulf Arabic">Gulf Arabic</option>
+              <option value="Egyptian Arabic">Egyptian Arabic</option>
+              <option value="Levantine Arabic">Levantine Arabic</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label for="speakerRole">Speaker Role</label>
+            <select id="speakerRole">
+              <option value="Auto">Auto</option>
+              <option value="Client">Client</option>
+              <option value="Representative">Representative</option>
             </select>
           </div>
 

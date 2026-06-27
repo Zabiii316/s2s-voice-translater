@@ -1,120 +1,278 @@
+from __future__ import annotations
+
+import logging
+import time
+from io import BytesIO
+from typing import Optional
+
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from app.services.translation_service import TranslationService
-from app.services.pii_service import PIIService
 from gtts import gTTS
-from io import BytesIO
+from pydantic import BaseModel, Field
 
-app = FastAPI(title="S2S Voice Translator Backend")
+load_dotenv()
+
+from app.services.pii_service import PIIService
+from app.services.translation_service import TranslationService
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format=(
+        "%(asctime)s | %(levelname)s | "
+        "%(name)s | %(message)s"
+    ),
+)
+
+logger = logging.getLogger("s2s-backend")
+
+
+app = FastAPI(
+    title="S2S Voice Translator Backend",
+    version="1.1.0",
+)
+
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_credentials=False,
+    allow_methods=[
+        "GET",
+        "POST",
+        "OPTIONS",
+    ],
     allow_headers=["*"],
 )
+
 
 translator = TranslationService()
 pii_service = PIIService()
 
 
+class TranslateRequest(BaseModel):
+    text: str = Field(
+        ...,
+        min_length=1,
+        max_length=6000,
+    )
+
+    source_language: str = "English"
+    target_language: str = "Urdu"
+    arabic_dialect: str = "MSA"
+    speaker_role: Optional[str] = "Auto"
+    pathway: Optional[str] = "A"
+
+
+class TTSRequest(BaseModel):
+    text: str = Field(
+        ...,
+        min_length=1,
+        max_length=6000,
+    )
+
+    language: str = "English"
+
+
 @app.get("/")
-def home():
+async def home() -> dict:
     return {
-        "message": "S2S Voice Translator Backend is running"
+        "message": (
+            "S2S Voice Translator Backend "
+            "is running"
+        ),
+        "version": "1.1.0",
+        "ai_translation_enabled": (
+            translator.ai_enabled
+        ),
+    }
+
+
+@app.get("/health")
+async def health() -> dict:
+    return {
+        "status": "ok",
+        "ai_translation_enabled": (
+            translator.ai_enabled
+        ),
     }
 
 
 @app.post("/translate")
-def translate(payload: dict):
+async def translate(
+    payload: TranslateRequest,
+) -> dict:
+
+    started = time.perf_counter()
+
     try:
-        text = payload.get("text", "")
-        source_language = payload.get("source_language", "English")
-        target_language = payload.get("target_language", "Urdu")
-        arabic_dialect = payload.get("arabic_dialect", "MSA")
+        original_text = payload.text.strip()
 
-        if not text:
-            raise HTTPException(status_code=400, detail="Text is required")
+        pii_result = pii_service.mask_text(
+            original_text
+        )
 
-        pii_result = pii_service.mask_text(text)
+        masked_text = pii_result.get(
+            "masked_text",
+            original_text,
+        )
 
-        translated_text = translator.translate(
-            text=pii_result["masked_text"],
-            source_language=source_language,
-            target_language=target_language,
-            arabic_dialect=arabic_dialect
+        result = await translator.translate_async(
+            text=masked_text,
+            source_language=payload.source_language,
+            target_language=payload.target_language,
+            arabic_dialect=payload.arabic_dialect,
+        )
+
+        elapsed_ms = round(
+            (
+                time.perf_counter()
+                - started
+            )
+            * 1000
         )
 
         return {
-            "original_text": text,
-            "masked_text": pii_result["masked_text"],
-            "pii_found": pii_result["pii_found"],
-            "detected_pii": pii_result["detected_pii"],
-            "source_language": source_language,
-            "target_language": target_language,
-            "arabic_dialect": arabic_dialect,
-            "translated_text": translated_text
+            "original_text": original_text,
+            "masked_text": masked_text,
+            "pii_found": bool(
+                pii_result.get(
+                    "pii_found",
+                    False,
+                )
+            ),
+            "detected_pii": pii_result.get(
+                "detected_pii",
+                [],
+            ),
+            "source_language": (
+                translator.normalize_language(
+                    payload.source_language
+                )
+            ),
+            "target_language": (
+                translator.normalize_language(
+                    payload.target_language
+                )
+            ),
+            "arabic_dialect": (
+                translator.normalize_dialect(
+                    payload.arabic_dialect
+                )
+            ),
+            "translated_text": (
+                result.translated_text
+            ),
+            "provider": result.provider,
+            "segments": result.segments,
+            "translation_latency_ms": (
+                elapsed_ms
+            ),
         }
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
 
     except HTTPException:
         raise
 
-    except Exception as e:
-        print("TRANSLATION ERROR:", str(e))
+    except Exception as exc:
+        logger.exception(
+            "Translation endpoint failed"
+        )
+
         raise HTTPException(
             status_code=500,
-            detail=f"Translation failed: {str(e)}"
-        )
+            detail="Translation failed",
+        ) from exc
+
+
+def generate_tts_audio(
+    text: str,
+    language_code: str,
+) -> BytesIO:
+
+    buffer = BytesIO()
+
+    gTTS(
+        text=text,
+        lang=language_code,
+        slow=False,
+    ).write_to_fp(buffer)
+
+    buffer.seek(0)
+
+    return buffer
 
 
 @app.post("/tts")
-def text_to_speech(payload: dict):
-    try:
-        text = payload.get("text", "")
-        language = payload.get("language", "Urdu")
+async def text_to_speech(
+    payload: TTSRequest,
+) -> StreamingResponse:
 
-        if not text:
-            raise HTTPException(status_code=400, detail="Text is required")
+    language_map = {
+        "English": "en",
+        "Urdu": "ur",
+        "Arabic": "ar",
+    }
 
-        language_map = {
-            "English": "en",
-            "Urdu": "ur",
-            "Arabic": "ar"
-        }
+    language = payload.language.strip().title()
 
-        lang_code = language_map.get(language, "en")
+    language_code = language_map.get(
+        language
+    )
 
-        print("TTS REQUEST TEXT:", text)
-        print("TTS LANGUAGE:", language)
-        print("TTS LANGUAGE CODE:", lang_code)
-
-        audio_buffer = BytesIO()
-
-        tts = gTTS(
-            text=text,
-            lang=lang_code,
-            slow=False
+    if not language_code:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsupported TTS language: "
+                f"{payload.language}"
+            ),
         )
 
-        tts.write_to_fp(audio_buffer)
-        audio_buffer.seek(0)
+    text = payload.text.strip()
+
+    if "[Offline phrase not found" in text:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Cannot speak an untranslated "
+                "offline fallback message"
+            ),
+        )
+
+    try:
+        audio_buffer = await run_in_threadpool(
+            generate_tts_audio,
+            text,
+            language_code,
+        )
 
         return StreamingResponse(
             audio_buffer,
             media_type="audio/mpeg",
             headers={
-                "Content-Disposition": "inline; filename=tts.mp3"
-            }
+                "Content-Disposition": (
+                    "inline; "
+                    "filename=translation.mp3"
+                ),
+                "Cache-Control": "no-store",
+            },
         )
 
-    except HTTPException:
-        raise
+    except Exception as exc:
+        logger.exception(
+            "TTS generation failed"
+        )
 
-    except Exception as e:
-        print("TTS ERROR:", str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"TTS failed: {str(e)}"
-        )
+            detail="TTS generation failed",
+        ) from exc

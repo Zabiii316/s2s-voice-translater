@@ -1,3 +1,12 @@
+"use strict";
+
+const API_BASE_URL = "http://127.0.0.1:8000";
+
+const SILENCE_TIMEOUT_MS = 2200;
+const RESTART_DELAY_MS = 450;
+const REQUEST_TIMEOUT_MS = 45000;
+const MIN_TRANSLATE_CHARS = 2;
+
 const startBtn = document.getElementById("startBtn");
 const stopBtn = document.getElementById("stopBtn");
 const speakBtn = document.getElementById("speakBtn");
@@ -8,64 +17,153 @@ const exportJsonBtn = document.getElementById("exportJsonBtn");
 
 const pathwayABtn = document.getElementById("pathwayABtn");
 const pathwayBBtn = document.getElementById("pathwayBBtn");
-const activePathwayLabel = document.getElementById("activePathwayLabel");
+const activePathwayLabel = document.getElementById(
+  "activePathwayLabel"
+);
 
 const originalText = document.getElementById("originalText");
-const translatedText = document.getElementById("translatedText");
+const translatedText = document.getElementById(
+  "translatedText"
+);
+
 const statusText = document.getElementById("status");
 
-const sourceLanguage = document.getElementById("sourceLanguage");
-const targetLanguage = document.getElementById("targetLanguage");
-const arabicDialect = document.getElementById("arabicDialect");
-const speakerRole = document.getElementById("speakerRole");
+const sourceLanguage = document.getElementById(
+  "sourceLanguage"
+);
+
+const targetLanguage = document.getElementById(
+  "targetLanguage"
+);
+
+const arabicDialect = document.getElementById(
+  "arabicDialect"
+);
+
+const speakerRole = document.getElementById(
+  "speakerRole"
+);
 
 const subtitle = document.getElementById("subtitle");
 
-const conversationHistory = document.getElementById("conversationHistory");
+const conversationHistory = document.getElementById(
+  "conversationHistory"
+);
+
 const turnCount = document.getElementById("turnCount");
 
-const sourceMetric = document.getElementById("sourceMetric");
-const targetMetric = document.getElementById("targetMetric");
-const pathwayMetric = document.getElementById("pathwayMetric");
-const dialectMetric = document.getElementById("dialectMetric");
+const sourceMetric = document.getElementById(
+  "sourceMetric"
+);
 
-const statusPill = document.getElementById("statusPill");
+const targetMetric = document.getElementById(
+  "targetMetric"
+);
+
+const pathwayMetric = document.getElementById(
+  "pathwayMetric"
+);
+
+const dialectMetric = document.getElementById(
+  "dialectMetric"
+);
+
+const statusPill = document.getElementById(
+  "statusPill"
+);
+
 const voiceOrb = document.getElementById("voiceOrb");
 const orbLabel = document.getElementById("orbLabel");
 
-const inputPanelTag = document.getElementById("inputPanelTag");
-const inputPanelTitle = document.getElementById("inputPanelTitle");
-const outputPanelTag = document.getElementById("outputPanelTag");
-const outputPanelTitle = document.getElementById("outputPanelTitle");
+const inputPanelTag = document.getElementById(
+  "inputPanelTag"
+);
+
+const inputPanelTitle = document.getElementById(
+  "inputPanelTitle"
+);
+
+const outputPanelTag = document.getElementById(
+  "outputPanelTag"
+);
+
+const outputPanelTitle = document.getElementById(
+  "outputPanelTitle"
+);
 
 const callTimer = document.getElementById("callTimer");
-const translationLatency = document.getElementById("translationLatency");
-const ttsLatency = document.getElementById("ttsLatency");
-const totalLatency = document.getElementById("totalLatency");
-const confidenceScore = document.getElementById("confidenceScore");
-const confidenceFill = document.getElementById("confidenceFill");
 
-const piiStatus = document.getElementById("piiStatus");
+const translationLatency = document.getElementById(
+  "translationLatency"
+);
+
+const ttsLatency = document.getElementById(
+  "ttsLatency"
+);
+
+const totalLatency = document.getElementById(
+  "totalLatency"
+);
+
+const confidenceScore = document.getElementById(
+  "confidenceScore"
+);
+
+const confidenceFill = document.getElementById(
+  "confidenceFill"
+);
+
+const piiStatus = document.getElementById(
+  "piiStatus"
+);
+
 const piiTypes = document.getElementById("piiTypes");
 
-let recognition;
+
+const SpeechRecognition =
+  window.SpeechRecognition ||
+  window.webkitSpeechRecognition;
+
+
+let recognition = null;
+
+let sessionActive = false;
+let recognitionRunning = false;
+let manualStopRequested = false;
+let pendingUtteranceFlush = false;
+let busy = false;
+
+let silenceTimer = null;
+let restartTimer = null;
+
+let finalBuffer = "";
+let interimBuffer = "";
+let lastTranslatedText = "";
+
+let currentAudio = null;
+
 let totalTurns = 0;
 let activePathway = "A";
 let sessionEntries = [];
 
-const sessionId = `s2s-session-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-
 let callStartTime = null;
 let callTimerInterval = null;
 
-const SpeechRecognition =
-  window.SpeechRecognition || window.webkitSpeechRecognition;
+
+const sessionId =
+  `s2s-session-${
+    new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")
+  }`;
+
 
 const pathwayConfig = {
   A: {
     label: "Pathway A Active",
     metric: "A",
-    subtitle: "Pathway A: Client → Representative | Arabic → Urdu",
+    subtitle:
+      "Pathway A: Client → Representative | Arabic → Urdu",
     speaker: "Client",
     destination: "Representative",
     source: "Arabic",
@@ -76,10 +174,12 @@ const pathwayConfig = {
     outputTag: "Representative Output Stream",
     outputTitle: "Translation for Representative"
   },
+
   B: {
     label: "Pathway B Active",
     metric: "B",
-    subtitle: "Pathway B: Representative → Client | English/Urdu → Arabic",
+    subtitle:
+      "Pathway B: Representative → Client | English/Urdu → Arabic",
     speaker: "Representative",
     destination: "Client",
     source: "English",
@@ -92,694 +192,1640 @@ const pathwayConfig = {
   }
 };
 
+
+function compactWhitespace(value) {
+  return (value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+function appendTranscript(base, addition) {
+  const cleanBase = compactWhitespace(base);
+  const cleanAddition = compactWhitespace(addition);
+
+  if (!cleanAddition) {
+    return cleanBase;
+  }
+
+  if (!cleanBase) {
+    return cleanAddition;
+  }
+
+  if (cleanBase.endsWith(cleanAddition)) {
+    return cleanBase;
+  }
+
+  return `${cleanBase} ${cleanAddition}`;
+}
+
+
 function shortDialectName(value) {
-  if (value === "Gulf Arabic") return "Gulf";
-  if (value === "Egyptian Arabic") return "Egyptian";
-  if (value === "Levantine Arabic") return "Levantine";
+  if (value === "Gulf Arabic") {
+    return "Gulf";
+  }
+
+  if (value === "Egyptian Arabic") {
+    return "Egyptian";
+  }
+
+  if (value === "Levantine Arabic") {
+    return "Levantine";
+  }
+
   return "MSA";
 }
 
+
 function isArabicInvolved() {
-  return sourceLanguage.value === "Arabic" || targetLanguage.value === "Arabic";
+  return (
+    sourceLanguage.value === "Arabic" ||
+    targetLanguage.value === "Arabic"
+  );
 }
+
 
 function updateDialectAvailability() {
-  const arabicActive = isArabicInvolved();
-  arabicDialect.disabled = !arabicActive;
+  const enabled = isArabicInvolved();
 
-  if (!arabicActive) {
-    dialectMetric.innerText = "N/A";
-  } else {
-    dialectMetric.innerText = shortDialectName(arabicDialect.value);
-  }
+  arabicDialect.disabled = !enabled;
+
+  dialectMetric.innerText = enabled
+    ? shortDialectName(arabicDialect.value)
+    : "N/A";
 }
+
 
 function getCurrentSpeaker() {
-  if (speakerRole.value !== "Auto") {
-    return speakerRole.value;
+  if (speakerRole.value === "Auto") {
+    return pathwayConfig[
+      activePathway
+    ].speaker;
   }
 
-  return pathwayConfig[activePathway].speaker;
+  return speakerRole.value;
 }
 
-function getCurrentDestination() {
-  const currentSpeaker = getCurrentSpeaker();
 
-  if (currentSpeaker === "Client") {
+function getCurrentDestination() {
+  const speaker = getCurrentSpeaker();
+
+  if (speaker === "Client") {
     return "Representative";
   }
 
-  if (currentSpeaker === "Representative") {
+  if (speaker === "Representative") {
     return "Client";
   }
 
-  return pathwayConfig[activePathway].destination;
+  return pathwayConfig[
+    activePathway
+  ].destination;
 }
 
-function setPathway(pathway) {
-  activePathway = pathway;
-  const config = pathwayConfig[pathway];
 
-  sourceLanguage.value = config.source;
-  targetLanguage.value = config.target;
-  arabicDialect.value = config.dialect;
-  speakerRole.value = "Auto";
-
-  pathwayABtn.classList.toggle("active", pathway === "A");
-  pathwayBBtn.classList.toggle("active", pathway === "B");
-
-  activePathwayLabel.innerText = config.label;
-  pathwayMetric.innerText = config.metric;
-
-  inputPanelTag.innerText = config.inputTag;
-  inputPanelTitle.innerText = config.inputTitle;
-  outputPanelTag.innerText = config.outputTag;
-  outputPanelTitle.innerText = config.outputTitle;
-
-  originalText.value = "";
-  translatedText.value = "";
-
-  updateSubtitle();
-  updateDialectAvailability();
-  setSystemStatus(`${config.label} selected`, "ready");
-}
-
-function updateSubtitle() {
-  const config = pathwayConfig[activePathway];
-
-  subtitle.innerText =
-    `${config.subtitle} | Current: ${sourceLanguage.value} → ${targetLanguage.value} | Dialect: ${shortDialectName(arabicDialect.value)}`;
-
-  sourceMetric.innerText = sourceLanguage.value;
-  targetMetric.innerText = targetLanguage.value;
-
-  updateDialectAvailability();
-}
-
-function setSystemStatus(message, type = "ready") {
+function setSystemStatus(
+  message,
+  type = "ready"
+) {
   statusText.innerText = message;
 
-  statusPill.className = "status-pill";
-  statusPill.classList.add(`status-${type}`);
+  statusPill.className =
+    `status-pill status-${type}`;
 
-  if (type === "listening" || type === "translating" || type === "speaking") {
+  if (
+    type === "listening" ||
+    type === "translating" ||
+    type === "speaking"
+  ) {
     voiceOrb.classList.add("active");
   } else {
     voiceOrb.classList.remove("active");
   }
 
-  if (type === "listening") {
-    orbLabel.innerText = "Listening for speech...";
-  } else if (type === "translating") {
-    orbLabel.innerText = `Translating with ${shortDialectName(arabicDialect.value)} Arabic context...`;
-  } else if (type === "speaking") {
-    orbLabel.innerText = "Playing translated audio...";
-  } else if (type === "error") {
-    orbLabel.innerText = "System encountered an error";
-  } else {
-    orbLabel.innerText = "System Ready";
-  }
+  const orbMessages = {
+    ready: "System Ready",
+
+    listening:
+      "Listening for the complete sentence...",
+
+    translating:
+      "Translating the complete utterance...",
+
+    speaking:
+      "Playing translated audio...",
+
+    error:
+      "System encountered an error"
+  };
+
+  orbLabel.innerText =
+    orbMessages[type] || message;
 }
 
+
+function updateSubtitle() {
+  const config =
+    pathwayConfig[activePathway];
+
+  subtitle.innerText =
+    `${config.subtitle} | ` +
+    `Current: ${sourceLanguage.value} → ` +
+    `${targetLanguage.value} | ` +
+    `Dialect: ${
+      shortDialectName(
+        arabicDialect.value
+      )
+    }`;
+
+  sourceMetric.innerText =
+    sourceLanguage.value;
+
+  targetMetric.innerText =
+    targetLanguage.value;
+
+  updateDialectAvailability();
+  setRecognitionLanguage();
+}
+
+
+function setPathway(pathway) {
+  stopVoiceSession(false);
+
+  activePathway = pathway;
+
+  const config =
+    pathwayConfig[pathway];
+
+  sourceLanguage.value =
+    config.source;
+
+  targetLanguage.value =
+    config.target;
+
+  arabicDialect.value =
+    config.dialect;
+
+  speakerRole.value = "Auto";
+
+  pathwayABtn.classList.toggle(
+    "active",
+    pathway === "A"
+  );
+
+  pathwayBBtn.classList.toggle(
+    "active",
+    pathway === "B"
+  );
+
+  activePathwayLabel.innerText =
+    config.label;
+
+  pathwayMetric.innerText =
+    config.metric;
+
+  inputPanelTag.innerText =
+    config.inputTag;
+
+  inputPanelTitle.innerText =
+    config.inputTitle;
+
+  outputPanelTag.innerText =
+    config.outputTag;
+
+  outputPanelTitle.innerText =
+    config.outputTitle;
+
+  resetUtteranceBuffers();
+
+  originalText.value = "";
+  translatedText.value = "";
+
+  updateSubtitle();
+
+  setSystemStatus(
+    `${config.label} selected`,
+    "ready"
+  );
+}
+
+
 function startCallTimer() {
-  if (callTimerInterval) return;
+  if (callTimerInterval) {
+    return;
+  }
 
   callStartTime = Date.now();
 
-  callTimerInterval = setInterval(() => {
-    const elapsedSeconds = Math.floor((Date.now() - callStartTime) / 1000);
-    const minutes = String(Math.floor(elapsedSeconds / 60)).padStart(2, "0");
-    const seconds = String(elapsedSeconds % 60).padStart(2, "0");
+  callTimerInterval =
+    window.setInterval(() => {
+      const elapsed =
+        Math.floor(
+          (
+            Date.now() -
+            callStartTime
+          ) / 1000
+        );
 
-    callTimer.innerText = `${minutes}:${seconds}`;
-  }, 1000);
+      const minutes =
+        String(
+          Math.floor(elapsed / 60)
+        ).padStart(2, "0");
+
+      const seconds =
+        String(
+          elapsed % 60
+        ).padStart(2, "0");
+
+      callTimer.innerText =
+        `${minutes}:${seconds}`;
+    }, 1000);
 }
+
 
 function stopCallTimer() {
   if (callTimerInterval) {
-    clearInterval(callTimerInterval);
-    callTimerInterval = null;
+    window.clearInterval(
+      callTimerInterval
+    );
   }
+
+  callTimerInterval = null;
 }
+
 
 function resetPerformanceMetrics() {
   translationLatency.innerText = "0 ms";
   ttsLatency.innerText = "0 ms";
   totalLatency.innerText = "0 ms";
+
   confidenceScore.innerText = "0%";
   confidenceFill.style.width = "0%";
+
   piiStatus.innerText = "Clear";
-  piiStatus.className = "performance-value pii-safe";
-  piiTypes.innerText = "No sensitive data detected";
+
+  piiStatus.className =
+    "performance-value pii-safe";
+
+  piiTypes.innerText =
+    "No sensitive data detected";
 }
 
-function updatePIIStatus(piiFound, detectedPii) {
-  if (piiFound) {
-    piiStatus.innerText = "Detected";
-    piiStatus.className = "performance-value pii-warning";
-    piiTypes.innerText = detectedPii.join(", ");
-  } else {
-    piiStatus.innerText = "Clear";
-    piiStatus.className = "performance-value pii-safe";
-    piiTypes.innerText = "No sensitive data detected";
+
+function updatePIIStatus(
+  found,
+  detected
+) {
+  piiStatus.innerText =
+    found ? "Detected" : "Clear";
+
+  piiStatus.className =
+    `performance-value ${
+      found
+        ? "pii-warning"
+        : "pii-safe"
+    }`;
+
+  piiTypes.innerText =
+    found
+      ? (detected || []).join(", ")
+      : "No sensitive data detected";
+}
+
+
+function updatePerformanceMetrics(
+  metrics
+) {
+  translationLatency.innerText =
+    `${metrics.translationLatencyMs} ms`;
+
+  ttsLatency.innerText =
+    `${metrics.ttsLatencyMs} ms`;
+
+  totalLatency.innerText =
+    `${metrics.totalLatencyMs} ms`;
+
+  confidenceScore.innerText =
+    `${metrics.confidence}%`;
+
+  confidenceFill.style.width =
+    `${metrics.confidence}%`;
+}
+
+
+function calculateConfidence(
+  original,
+  translation,
+  provider,
+  piiFound
+) {
+  if (!compactWhitespace(translation)) {
+    return 0;
   }
-}
 
-function updatePerformanceMetrics(metrics) {
-  translationLatency.innerText = `${metrics.translationLatencyMs} ms`;
-  ttsLatency.innerText = `${metrics.ttsLatencyMs} ms`;
-  totalLatency.innerText = `${metrics.totalLatencyMs} ms`;
-  confidenceScore.innerText = `${metrics.confidence}%`;
-  confidenceFill.style.width = `${metrics.confidence}%`;
-}
-
-function calculateConfidence(original, translation, sourceLang, targetLang, piiFound) {
-  if (!translation || translation.trim() === "") return 0;
-
-  const lowerTranslation = translation.toLowerCase();
+  let score =
+    provider === "openai"
+      ? 95
+      : 82;
 
   if (
-    lowerTranslation.includes("[demo") ||
-    lowerTranslation.includes("[mock") ||
-    lowerTranslation.includes("translation]")
+    provider ===
+    "offline_phrasebook_partial"
   ) {
-    return piiFound ? 50 : 58;
-  }
-
-  let score = 94;
-
-  if (sourceLang === "Arabic" || targetLang === "Arabic") {
-    score -= 2;
-  }
-
-  if (arabicDialect.value !== "MSA") {
-    score -= 2;
+    score = 45;
   }
 
   if (piiFound) {
+    score -= 4;
+  }
+
+  if ((original || "").length < 5) {
     score -= 5;
   }
 
-  if (original.length < 6) {
-    score -= 6;
-  }
-
-  if (translation.length < 4) {
-    score -= 8;
-  }
-
-  return Math.max(60, Math.min(score, 97));
+  return Math.max(
+    35,
+    Math.min(score, 98)
+  );
 }
 
-sourceLanguage.onchange = updateSubtitle;
-targetLanguage.onchange = updateSubtitle;
-arabicDialect.onchange = updateSubtitle;
-speakerRole.onchange = updateSubtitle;
 
-pathwayABtn.onclick = () => setPathway("A");
-pathwayBBtn.onclick = () => setPathway("B");
+function escapeHtml(value) {
+  const div =
+    document.createElement("div");
 
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.innerText = text;
+  div.innerText = value || "";
+
   return div.innerHTML;
 }
 
-function formatPIITypes(types) {
-  if (!types || types.length === 0) return "None";
-  return types.join(", ");
-}
 
 function addConversationEntry(
-  original,
-  maskedText,
-  translation,
-  sourceLang,
-  targetLang,
-  dialect,
-  piiFound,
-  detectedPii,
+  data,
   metrics
 ) {
-  const speaker = getCurrentSpeaker();
-  const destination = getCurrentDestination();
+  const emptyHistory =
+    document.querySelector(
+      ".empty-history"
+    );
 
-  const emptyHistory = document.querySelector(".empty-history");
   if (emptyHistory) {
     emptyHistory.remove();
   }
 
   totalTurns += 1;
-  turnCount.innerText = `${totalTurns} turn${totalTurns > 1 ? "s" : ""}`;
 
-  const item = document.createElement("div");
-  item.className = "history-item";
+  turnCount.innerText =
+    `${totalTurns} turn${
+      totalTurns === 1
+        ? ""
+        : "s"
+    }`;
 
-  const time = new Date().toLocaleTimeString();
-  const isoTime = new Date().toISOString();
+  const speaker =
+    getCurrentSpeaker();
 
-  const sessionEntry = {
+  const destination =
+    getCurrentDestination();
+
+  const time =
+    new Date().toLocaleTimeString();
+
+  const entry = {
     session_id: sessionId,
     turn: totalTurns,
-    timestamp: isoTime,
+    timestamp:
+      new Date().toISOString(),
     display_time: time,
     pathway: activePathway,
-    speaker: speaker,
-    destination: destination,
-    speaker_role_setting: speakerRole.value,
-    source_language: sourceLang,
-    target_language: targetLang,
-    arabic_dialect: dialect,
-    original_text: original,
-    masked_text: maskedText,
-    translated_text: translation,
-    pii_found: piiFound,
-    detected_pii: detectedPii || [],
-    metrics: {
-      translation_latency_ms: metrics.translationLatencyMs,
-      tts_latency_ms: metrics.ttsLatencyMs,
-      total_latency_ms: metrics.totalLatencyMs,
-      confidence: metrics.confidence
-    }
+    speaker,
+    destination,
+
+    source_language:
+      data.source_language,
+
+    target_language:
+      data.target_language,
+
+    arabic_dialect:
+      data.arabic_dialect,
+
+    original_text:
+      data.original_text,
+
+    masked_text:
+      data.masked_text,
+
+    translated_text:
+      data.translated_text,
+
+    pii_found:
+      data.pii_found,
+
+    detected_pii:
+      data.detected_pii || [],
+
+    provider:
+      data.provider,
+
+    metrics
   };
 
-  sessionEntries.push(sessionEntry);
+  sessionEntries.push(entry);
 
-  const piiBadgeHtml = piiFound
-    ? `<span class="pii-badge">PII: ${escapeHtml(formatPIITypes(detectedPii))}</span>`
-    : `<span class="confidence-badge">PII Clear</span>`;
+  const item =
+    document.createElement("div");
 
-  const maskedTextHtml = piiFound
-    ? `
-      <div class="history-label">Masked Text Sent to Translation</div>
-      <div class="masked-text-box">${escapeHtml(maskedText)}</div>
-    `
-    : "";
+  item.className = "history-item";
 
   item.innerHTML = `
     <div class="history-top">
+
       <div class="history-meta-row">
-        <span>Turn ${totalTurns} • ${time}</span>
-        <span class="language-badge">Pathway ${activePathway}</span>
-        <span class="language-badge">${sourceLang} → ${targetLang}</span>
-        <span class="dialect-badge">Dialect: ${escapeHtml(dialect)}</span>
+        <span>
+          Turn ${totalTurns} • ${time}
+        </span>
+
+        <span class="language-badge">
+          Pathway ${activePathway}
+        </span>
+
+        <span class="language-badge">
+          ${escapeHtml(data.source_language)}
+          →
+          ${escapeHtml(data.target_language)}
+        </span>
+
+        <span class="dialect-badge">
+          ${escapeHtml(data.arabic_dialect)}
+        </span>
       </div>
 
       <div class="history-meta-row">
-        <span class="speaker-badge">${escapeHtml(speaker)} Said</span>
-        <span class="destination-badge">For ${escapeHtml(destination)}</span>
-        <span class="role-badge">Role: ${escapeHtml(speakerRole.value)}</span>
-        <span class="latency-badge">Total ${metrics.totalLatencyMs} ms</span>
-        <span class="confidence-badge">Confidence ${metrics.confidence}%</span>
-        ${piiBadgeHtml}
+        <span class="speaker-badge">
+          ${escapeHtml(speaker)} Said
+        </span>
+
+        <span class="destination-badge">
+          For ${escapeHtml(destination)}
+        </span>
+
+        <span class="latency-badge">
+          ${metrics.totalLatencyMs} ms
+        </span>
+
+        <span class="confidence-badge">
+          ${metrics.confidence}%
+        </span>
       </div>
     </div>
 
-    <div class="history-label">${escapeHtml(speaker)} Original</div>
-    <div class="history-original">${escapeHtml(original)}</div>
+    <div class="history-label">
+      Original
+    </div>
 
-    ${maskedTextHtml}
+    <div class="history-original">
+      ${escapeHtml(data.original_text)}
+    </div>
 
-    <div class="history-label">AI Translation for ${escapeHtml(destination)}</div>
-    <div class="history-translation">${escapeHtml(translation)}</div>
+    <div class="history-label">
+      Translation
+      (${escapeHtml(
+        data.provider || "unknown"
+      )})
+    </div>
+
+    <div class="history-translation">
+      ${escapeHtml(data.translated_text)}
+    </div>
   `;
 
   conversationHistory.prepend(item);
 }
 
-async function speakTranslation(text) {
-  if (!text || text.trim() === "") {
-    alert("No translation available to speak.");
-    return { ttsLatencyMs: 0 };
-  }
 
-  const ttsStart = performance.now();
+async function fetchWithTimeout(
+  url,
+  options,
+  timeoutMs = REQUEST_TIMEOUT_MS
+) {
+  const controller =
+    new AbortController();
+
+  const timeoutId =
+    window.setTimeout(
+      () => controller.abort(),
+      timeoutMs
+    );
 
   try {
-    setSystemStatus("Generating voice...", "speaking");
-
-    const response = await fetch("http://127.0.0.1:8000/tts", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text: text,
-        language: targetLanguage.value,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error("TTS backend error: " + response.status);
-    }
-
-    const audioBlob = await response.blob();
-    const ttsLatencyMs = Math.round(performance.now() - ttsStart);
-
-    const audioUrl = URL.createObjectURL(audioBlob);
-    const audio = new Audio(audioUrl);
-
-    audio.onplay = () => {
-      setSystemStatus("Playing translated voice...", "speaking");
-    };
-
-    audio.onended = () => {
-      setSystemStatus("Finished speaking", "ready");
-      URL.revokeObjectURL(audioUrl);
-    };
-
-    audio.onerror = () => {
-      setSystemStatus("Audio playback error", "error");
-    };
-
-    await audio.play();
-
-    return { ttsLatencyMs };
-  } catch (error) {
-    console.error("TTS error:", error);
-    setSystemStatus("TTS error", "error");
-    alert("TTS error. Check backend terminal.");
-    return { ttsLatencyMs: Math.round(performance.now() - ttsStart) };
+    return await fetch(
+      url,
+      {
+        ...options,
+        signal: controller.signal
+      }
+    );
+  } finally {
+    window.clearTimeout(timeoutId);
   }
 }
 
-async function translateText(text, autoSpeak = false) {
-  startCallTimer();
 
-  const turnStart = performance.now();
+async function readErrorResponse(
+  response
+) {
+  try {
+    const payload =
+      await response.json();
 
-  setSystemStatus("Translating...", "translating");
+    return (
+      payload.detail ||
+      JSON.stringify(payload)
+    );
+  } catch (_) {
+    return await response.text();
+  }
+}
+
+
+async function speakTranslation(text) {
+  const cleanText =
+    compactWhitespace(text);
+
+  if (!cleanText) {
+    return {
+      ttsLatencyMs: 0
+    };
+  }
+
+  if (
+    cleanText.includes(
+      "[Offline phrase not found"
+    )
+  ) {
+    return {
+      ttsLatencyMs: 0
+    };
+  }
+
+  const started =
+    performance.now();
+
+  setSystemStatus(
+    "Generating translated voice...",
+    "speaking"
+  );
 
   try {
-    const translationStart = performance.now();
+    const response =
+      await fetchWithTimeout(
+        `${API_BASE_URL}/tts`,
+        {
+          method: "POST",
 
-    const response = await fetch("http://127.0.0.1:8000/translate", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text: text,
-        source_language: sourceLanguage.value,
-        target_language: targetLanguage.value,
-        arabic_dialect: arabicDialect.value,
-        speaker_role: getCurrentSpeaker(),
-        pathway: activePathway
-      }),
-    });
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
 
-    const translationLatencyMs = Math.round(performance.now() - translationStart);
+          body: JSON.stringify({
+            text: cleanText,
+            language:
+              targetLanguage.value
+          })
+        }
+      );
 
     if (!response.ok) {
-      throw new Error("Backend error: " + response.status);
+      throw new Error(
+        await readErrorResponse(
+          response
+        )
+      );
     }
 
-    const data = await response.json();
+    const audioBlob =
+      await response.blob();
 
-    translatedText.value = data.translated_text;
-    setSystemStatus("Translation complete", "ready");
+    const audioUrl =
+      URL.createObjectURL(
+        audioBlob
+      );
 
-    updatePIIStatus(data.pii_found, data.detected_pii);
-
-    let ttsResult = { ttsLatencyMs: 0 };
-
-    if (autoSpeak) {
-      ttsResult = await speakTranslation(data.translated_text);
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio = null;
     }
 
-    const totalLatencyMs = Math.round(performance.now() - turnStart);
+    return await new Promise(
+      (resolve, reject) => {
+        const audio =
+          new Audio(audioUrl);
 
-    const confidence = calculateConfidence(
-      data.original_text,
-      data.translated_text,
-      data.source_language,
-      data.target_language,
-      data.pii_found
+        currentAudio = audio;
+
+        let settled = false;
+
+        const finish = (
+          error = null
+        ) => {
+          if (settled) {
+            return;
+          }
+
+          settled = true;
+
+          URL.revokeObjectURL(
+            audioUrl
+          );
+
+          currentAudio = null;
+
+          const result = {
+            ttsLatencyMs:
+              Math.round(
+                performance.now() -
+                started
+              )
+          };
+
+          if (error) {
+            reject(error);
+          } else {
+            resolve(result);
+          }
+        };
+
+        audio.onplay = () => {
+          setSystemStatus(
+            "Playing translated voice...",
+            "speaking"
+          );
+        };
+
+        audio.onended = () => {
+          finish();
+        };
+
+        audio.onerror = () => {
+          finish(
+            new Error(
+              "Audio playback failed"
+            )
+          );
+        };
+
+        audio
+          .play()
+          .catch(
+            error => finish(error)
+          );
+      }
     );
+
+  } catch (error) {
+    console.error(
+      "TTS error:",
+      error
+    );
+
+    setSystemStatus(
+      `TTS error: ${error.message}`,
+      "error"
+    );
+
+    return {
+      ttsLatencyMs:
+        Math.round(
+          performance.now() -
+          started
+        )
+    };
+  }
+}
+
+
+async function translateText(
+  text,
+  autoSpeak = false
+) {
+  const cleanText =
+    compactWhitespace(text);
+
+  if (
+    cleanText.length <
+    MIN_TRANSLATE_CHARS
+  ) {
+    return null;
+  }
+
+  if (busy) {
+    return null;
+  }
+
+  if (
+    cleanText ===
+    lastTranslatedText
+  ) {
+    return null;
+  }
+
+  busy = true;
+
+  lastTranslatedText =
+    cleanText;
+
+  const turnStarted =
+    performance.now();
+
+  setSystemStatus(
+    "Translating complete sentence...",
+    "translating"
+  );
+
+  try {
+    const translationStarted =
+      performance.now();
+
+    const response =
+      await fetchWithTimeout(
+        `${API_BASE_URL}/translate`,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+
+          body: JSON.stringify({
+            text: cleanText,
+
+            source_language:
+              sourceLanguage.value,
+
+            target_language:
+              targetLanguage.value,
+
+            arabic_dialect:
+              arabicDialect.value,
+
+            speaker_role:
+              getCurrentSpeaker(),
+
+            pathway:
+              activePathway
+          })
+        }
+      );
+
+    if (!response.ok) {
+      throw new Error(
+        await readErrorResponse(
+          response
+        )
+      );
+    }
+
+    const data =
+      await response.json();
+
+    const translationLatencyMs =
+      data.translation_latency_ms ??
+      Math.round(
+        performance.now() -
+        translationStarted
+      );
+
+    translatedText.value =
+      data.translated_text;
+
+    updatePIIStatus(
+      data.pii_found,
+      data.detected_pii
+    );
+
+    let ttsResult = {
+      ttsLatencyMs: 0
+    };
+
+    const isFullyTranslated =
+      data.provider !==
+      "offline_phrasebook_partial";
+
+    if (
+      autoSpeak &&
+      isFullyTranslated
+    ) {
+      ttsResult =
+        await speakTranslation(
+          data.translated_text
+        );
+    }
 
     const metrics = {
       translationLatencyMs,
-      ttsLatencyMs: ttsResult.ttsLatencyMs,
-      totalLatencyMs,
-      confidence
+
+      ttsLatencyMs:
+        ttsResult.ttsLatencyMs,
+
+      totalLatencyMs:
+        Math.round(
+          performance.now() -
+          turnStarted
+        ),
+
+      confidence:
+        calculateConfidence(
+          data.original_text,
+          data.translated_text,
+          data.provider,
+          data.pii_found
+        )
     };
 
-    updatePerformanceMetrics(metrics);
-
-    addConversationEntry(
-      data.original_text,
-      data.masked_text,
-      data.translated_text,
-      data.source_language,
-      data.target_language,
-      data.arabic_dialect,
-      data.pii_found,
-      data.detected_pii,
+    updatePerformanceMetrics(
       metrics
     );
+
+    addConversationEntry(
+      data,
+      metrics
+    );
+
+    setSystemStatus(
+      "Translation complete",
+      "ready"
+    );
+
+    return data;
+
   } catch (error) {
-    console.error("Translation error:", error);
-    setSystemStatus("Translation error", "error");
-    alert("Translation error. Check backend server.");
+    console.error(
+      "Translation error:",
+      error
+    );
+
+    lastTranslatedText = "";
+
+    setSystemStatus(
+      `Translation error: ${
+        error.message
+      }`,
+      "error"
+    );
+
+    return null;
+
+  } finally {
+    busy = false;
   }
 }
 
-if (!SpeechRecognition) {
-  setSystemStatus("Speech Recognition not supported. Use Chrome.", "error");
-} else {
-  recognition = new SpeechRecognition();
-  recognition.continuous = false;
-  recognition.interimResults = true;
-  recognition.lang = "ar-SA";
 
-  recognition.onstart = () => {
-    startCallTimer();
-    setSystemStatus("Listening...", "listening");
+function clearTimers() {
+  if (silenceTimer) {
+    window.clearTimeout(
+      silenceTimer
+    );
+  }
+
+  if (restartTimer) {
+    window.clearTimeout(
+      restartTimer
+    );
+  }
+
+  silenceTimer = null;
+  restartTimer = null;
+}
+
+
+function resetUtteranceBuffers() {
+  finalBuffer = "";
+  interimBuffer = "";
+
+  pendingUtteranceFlush = false;
+
+  if (silenceTimer) {
+    window.clearTimeout(
+      silenceTimer
+    );
+  }
+
+  silenceTimer = null;
+}
+
+
+function setRecognitionLanguage() {
+  if (!recognition) {
+    return;
+  }
+
+  const languageCodes = {
+    English: "en-US",
+    Urdu: "ur-PK",
+    Arabic: "ar-SA"
   };
 
-  recognition.onresult = async (event) => {
-    let finalTranscript = "";
-    let interimTranscript = "";
+  recognition.lang =
+    languageCodes[
+      sourceLanguage.value
+    ] || "en-US";
+}
 
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const transcript = event.results[i][0].transcript;
 
-      if (event.results[i].isFinal) {
-        finalTranscript += transcript;
+function scheduleSilenceFlush() {
+  if (silenceTimer) {
+    window.clearTimeout(
+      silenceTimer
+    );
+  }
+
+  silenceTimer =
+    window.setTimeout(() => {
+      if (
+        !sessionActive ||
+        busy
+      ) {
+        return;
+      }
+
+      pendingUtteranceFlush = true;
+
+      setSystemStatus(
+        "End of sentence detected...",
+        "translating"
+      );
+
+      if (recognitionRunning) {
+        try {
+          recognition.stop();
+        } catch (error) {
+          console.warn(
+            "Recognition stop warning:",
+            error
+          );
+
+          recognitionRunning =
+            false;
+
+          void flushCurrentUtterance();
+        }
       } else {
-        interimTranscript += transcript;
+        void flushCurrentUtterance();
+      }
+    }, SILENCE_TIMEOUT_MS);
+}
+
+
+async function flushCurrentUtterance() {
+  const utterance =
+    compactWhitespace(
+      finalBuffer ||
+      interimBuffer ||
+      originalText.value
+    );
+
+  resetUtteranceBuffers();
+
+  if (
+    utterance.length <
+    MIN_TRANSLATE_CHARS
+  ) {
+    scheduleRecognitionRestart();
+    return;
+  }
+
+  originalText.value =
+    utterance;
+
+  await translateText(
+    utterance,
+    true
+  );
+
+  scheduleRecognitionRestart();
+}
+
+
+function scheduleRecognitionRestart() {
+  if (
+    !sessionActive ||
+    manualStopRequested ||
+    busy ||
+    currentAudio
+  ) {
+    return;
+  }
+
+  if (restartTimer) {
+    window.clearTimeout(
+      restartTimer
+    );
+  }
+
+  restartTimer =
+    window.setTimeout(() => {
+      startRecognitionEngine();
+    }, RESTART_DELAY_MS);
+}
+
+
+function startRecognitionEngine() {
+  if (
+    !recognition ||
+    !sessionActive ||
+    recognitionRunning ||
+    busy ||
+    currentAudio
+  ) {
+    return;
+  }
+
+  setRecognitionLanguage();
+
+  try {
+    recognition.start();
+  } catch (error) {
+    if (
+      error.name !==
+      "InvalidStateError"
+    ) {
+      console.error(
+        "Could not start recognition:",
+        error
+      );
+
+      setSystemStatus(
+        "Could not start microphone",
+        "error"
+      );
+    }
+  }
+}
+
+
+function stopVoiceSession(
+  updateStatus = true
+) {
+  sessionActive = false;
+  manualStopRequested = true;
+
+  clearTimers();
+
+  if (
+    recognitionRunning &&
+    recognition
+  ) {
+    try {
+      recognition.stop();
+    } catch (_) {
+      // Already stopped.
+    }
+  }
+
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
+
+  recognitionRunning = false;
+
+  resetUtteranceBuffers();
+  stopCallTimer();
+
+  if (updateStatus) {
+    setSystemStatus(
+      "Stopped",
+      "ready"
+    );
+  }
+}
+
+
+function initializeSpeechRecognition() {
+  if (!SpeechRecognition) {
+    setSystemStatus(
+      "Speech Recognition is not supported. Use Google Chrome.",
+      "error"
+    );
+
+    startBtn.disabled = true;
+    return;
+  }
+
+  recognition =
+    new SpeechRecognition();
+
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
+
+  setRecognitionLanguage();
+
+  recognition.onstart = () => {
+    recognitionRunning = true;
+
+    if (sessionActive) {
+      setSystemStatus(
+        "Listening...",
+        "listening"
+      );
+    }
+  };
+
+
+  recognition.onspeechstart = () => {
+    if (silenceTimer) {
+      window.clearTimeout(
+        silenceTimer
+      );
+    }
+
+    setSystemStatus(
+      "Speech detected...",
+      "listening"
+    );
+  };
+
+
+  recognition.onresult = event => {
+    let newFinalText = "";
+    let latestInterim = "";
+
+    for (
+      let index =
+        event.resultIndex;
+
+      index <
+        event.results.length;
+
+      index += 1
+    ) {
+      const result =
+        event.results[index];
+
+      const transcript =
+        compactWhitespace(
+          result[0].transcript
+        );
+
+      if (!transcript) {
+        continue;
+      }
+
+      if (result.isFinal) {
+        newFinalText =
+          appendTranscript(
+            newFinalText,
+            transcript
+          );
+      } else {
+        latestInterim =
+          appendTranscript(
+            latestInterim,
+            transcript
+          );
       }
     }
 
-    originalText.value = finalTranscript || interimTranscript;
-
-    if (finalTranscript) {
-      await translateText(finalTranscript, true);
+    if (newFinalText) {
+      finalBuffer =
+        appendTranscript(
+          finalBuffer,
+          newFinalText
+        );
     }
+
+    interimBuffer =
+      latestInterim;
+
+    originalText.value =
+      compactWhitespace(
+        `${finalBuffer} ${interimBuffer}`
+      );
+
+    scheduleSilenceFlush();
   };
 
-  recognition.onerror = (event) => {
-    console.error("Recognition error:", event);
-    setSystemStatus(`Recognition error - ${event.error}`, "error");
+
+  recognition.onspeechend = () => {
+    scheduleSilenceFlush();
   };
+
+
+  recognition.onerror = event => {
+    console.error(
+      "Speech recognition error:",
+      event.error
+    );
+
+    recognitionRunning = false;
+
+    if (
+      event.error ===
+        "not-allowed" ||
+      event.error ===
+        "service-not-allowed"
+    ) {
+      sessionActive = false;
+
+      setSystemStatus(
+        "Microphone permission was denied",
+        "error"
+      );
+
+      return;
+    }
+
+    if (
+      event.error ===
+      "no-speech"
+    ) {
+      setSystemStatus(
+        "No speech detected. Listening again...",
+        "listening"
+      );
+
+      scheduleRecognitionRestart();
+      return;
+    }
+
+    if (
+      event.error ===
+        "aborted" &&
+      manualStopRequested
+    ) {
+      return;
+    }
+
+    setSystemStatus(
+      `Recognition error: ${
+        event.error
+      }`,
+      "error"
+    );
+
+    scheduleRecognitionRestart();
+  };
+
 
   recognition.onend = () => {
+    recognitionRunning = false;
+
+    if (pendingUtteranceFlush) {
+      void flushCurrentUtterance();
+      return;
+    }
+
     if (
-      !statusText.innerText.includes("Translating") &&
-      !statusText.innerText.includes("Generating") &&
-      !statusText.innerText.includes("Playing")
+      sessionActive &&
+      !manualStopRequested
     ) {
-      setSystemStatus("Stopped", "ready");
+      scheduleRecognitionRestart();
     }
   };
 }
 
-function setRecognitionLanguage() {
-  if (!recognition) return;
 
-  if (sourceLanguage.value === "English") {
-    recognition.lang = "en-US";
-  } else if (sourceLanguage.value === "Arabic") {
-    recognition.lang = "ar-SA";
-  } else if (sourceLanguage.value === "Urdu") {
-    recognition.lang = "ur-PK";
-  }
-}
+function downloadFile(
+  filename,
+  content,
+  mimeType
+) {
+  const blob =
+    new Blob(
+      [content],
+      { type: mimeType }
+    );
 
-function downloadFile(filename, content, mimeType) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
+  const url =
+    URL.createObjectURL(blob);
 
-  const link = document.createElement("a");
+  const link =
+    document.createElement("a");
+
   link.href = url;
   link.download = filename;
-  document.body.appendChild(link);
-  link.click();
 
-  document.body.removeChild(link);
+  document.body.appendChild(
+    link
+  );
+
+  link.click();
+  link.remove();
+
   URL.revokeObjectURL(url);
 }
 
+
 function exportSessionAsJSON() {
-  if (sessionEntries.length === 0) {
-    alert("No session data to export.");
+  if (!sessionEntries.length) {
+    alert(
+      "No session data to export."
+    );
+
     return;
   }
 
-  const exportData = {
+  const data = {
     session_id: sessionId,
-    exported_at: new Date().toISOString(),
-    total_turns: sessionEntries.length,
-    current_pathway: activePathway,
-    source_language: sourceLanguage.value,
-    target_language: targetLanguage.value,
-    arabic_dialect: arabicDialect.value,
-    speaker_role: speakerRole.value,
-    entries: sessionEntries
-  };
 
-  const jsonContent = JSON.stringify(exportData, null, 2);
+    exported_at:
+      new Date().toISOString(),
+
+    total_turns:
+      sessionEntries.length,
+
+    entries:
+      sessionEntries
+  };
 
   downloadFile(
     `${sessionId}.json`,
-    jsonContent,
+    JSON.stringify(
+      data,
+      null,
+      2
+    ),
     "application/json"
   );
-
-  setSystemStatus("JSON session exported", "ready");
 }
 
+
 function exportSessionAsTXT() {
-  if (sessionEntries.length === 0) {
-    alert("No transcript to export.");
+  if (!sessionEntries.length) {
+    alert(
+      "No session data to export."
+    );
+
     return;
   }
 
-  let txt = "";
+  const lines = [
+    "Nova Voice AI Console - Session Transcript",
+    "================================================",
+    `Session ID: ${sessionId}`,
+    `Exported At: ${
+      new Date().toISOString()
+    }`,
+    ""
+  ];
 
-  txt += "Nova Voice AI Console - Session Transcript\n";
-  txt += "================================================\n\n";
-  txt += `Session ID: ${sessionId}\n`;
-  txt += `Exported At: ${new Date().toISOString()}\n`;
-  txt += `Total Turns: ${sessionEntries.length}\n\n`;
+  for (
+    const entry of sessionEntries
+  ) {
+    lines.push(
+      `Turn ${entry.turn} - ${entry.display_time}`,
 
-  txt += "Transcript\n";
-  txt += "================================================\n\n";
+      `${entry.source_language} → ${entry.target_language}`,
 
-  sessionEntries.forEach((entry) => {
-    txt += `Turn ${entry.turn}\n`;
-    txt += `Time: ${entry.display_time}\n`;
-    txt += `Pathway: ${entry.pathway}\n`;
-    txt += `Speaker: ${entry.speaker}\n`;
-    txt += `For: ${entry.destination}\n`;
-    txt += `Language: ${entry.source_language} → ${entry.target_language}\n`;
-    txt += `Arabic Dialect: ${entry.arabic_dialect}\n`;
-    txt += `PII Found: ${entry.pii_found ? "Yes" : "No"}\n`;
+      `Provider: ${entry.provider}`,
 
-    if (entry.pii_found) {
-      txt += `Detected PII: ${entry.detected_pii.join(", ")}\n`;
-      txt += `Masked Text Sent to Translation:\n${entry.masked_text}\n\n`;
-    }
+      `Original: ${entry.original_text}`,
 
-    txt += `Translation Latency: ${entry.metrics.translation_latency_ms} ms\n`;
-    txt += `TTS Latency: ${entry.metrics.tts_latency_ms} ms\n`;
-    txt += `Total Latency: ${entry.metrics.total_latency_ms} ms\n`;
-    txt += `Confidence: ${entry.metrics.confidence}%\n\n`;
+      `Translation: ${entry.translated_text}`,
 
-    txt += `Original:\n${entry.original_text}\n\n`;
-    txt += `Translation:\n${entry.translated_text}\n\n`;
-    txt += "------------------------------------------------\n\n";
-  });
+      "------------------------------------------------",
+
+      ""
+    );
+  }
 
   downloadFile(
     `${sessionId}.txt`,
-    txt,
+    lines.join("\n"),
     "text/plain"
   );
-
-  setSystemStatus("TXT transcript exported", "ready");
 }
 
-startBtn.onclick = () => {
-  if (!recognition) {
-    alert("Speech recognition not supported. Please use Google Chrome.");
-    return;
+
+sourceLanguage.addEventListener(
+  "change",
+  () => {
+    updateSubtitle();
+
+    if (sessionActive) {
+      stopVoiceSession(false);
+
+      setSystemStatus(
+        "Language changed. Press Start Listening.",
+        "ready"
+      );
+    }
   }
+);
 
-  startCallTimer();
-  setRecognitionLanguage();
 
-  originalText.value = "";
-  translatedText.value = "";
-  setSystemStatus("Starting microphone...", "listening");
+targetLanguage.addEventListener(
+  "change",
+  updateSubtitle
+);
 
-  recognition.start();
-};
 
-stopBtn.onclick = () => {
-  if (recognition) {
-    recognition.stop();
+arabicDialect.addEventListener(
+  "change",
+  updateSubtitle
+);
+
+
+speakerRole.addEventListener(
+  "change",
+  updateSubtitle
+);
+
+
+pathwayABtn.addEventListener(
+  "click",
+  () => setPathway("A")
+);
+
+
+pathwayBBtn.addEventListener(
+  "click",
+  () => setPathway("B")
+);
+
+
+startBtn.addEventListener(
+  "click",
+  () => {
+    if (!recognition) {
+      alert(
+        "Speech recognition is unavailable. Use Google Chrome."
+      );
+
+      return;
+    }
+
+    if (sessionActive) {
+      return;
+    }
+
+    manualStopRequested = false;
+    sessionActive = true;
+
+    lastTranslatedText = "";
+
+    resetUtteranceBuffers();
+
+    originalText.value = "";
+    translatedText.value = "";
+
+    startCallTimer();
+
+    setSystemStatus(
+      "Starting microphone...",
+      "listening"
+    );
+
+    startRecognitionEngine();
   }
+);
 
-  stopCallTimer();
-  setSystemStatus("Stopped", "ready");
-};
 
-translateBtn.onclick = async () => {
-  const text = originalText.value.trim();
-
-  if (!text) {
-    alert("Please type or speak text first.");
-    return;
+stopBtn.addEventListener(
+  "click",
+  () => {
+    stopVoiceSession(true);
   }
+);
 
-  await translateText(text, true);
-};
 
-speakBtn.onclick = async () => {
-  const text = translatedText.value.trim();
+translateBtn.addEventListener(
+  "click",
+  async () => {
+    const text =
+      compactWhitespace(
+        originalText.value
+      );
 
-  if (!text) {
-    alert("No translated text found.");
-    return;
+    if (!text) {
+      alert(
+        "Type or speak a sentence first."
+      );
+
+      return;
+    }
+
+    const resumeAfter =
+      sessionActive;
+
+    if (
+      recognitionRunning &&
+      recognition
+    ) {
+      try {
+        recognition.stop();
+      } catch (_) {
+        // Already stopping.
+      }
+    }
+
+    await translateText(
+      text,
+      true
+    );
+
+    if (resumeAfter) {
+      scheduleRecognitionRestart();
+    }
   }
+);
 
-  const result = await speakTranslation(text);
 
-  ttsLatency.innerText = `${result.ttsLatencyMs} ms`;
-};
+speakBtn.addEventListener(
+  "click",
+  async () => {
+    const text =
+      compactWhitespace(
+        translatedText.value
+      );
 
-exportTxtBtn.onclick = () => {
-  exportSessionAsTXT();
-};
+    if (!text) {
+      alert(
+        "No translated text is available."
+      );
 
-exportJsonBtn.onclick = () => {
-  exportSessionAsJSON();
-};
+      return;
+    }
 
-clearBtn.onclick = () => {
-  totalTurns = 0;
-  sessionEntries = [];
-  turnCount.innerText = "0 turns";
+    const result =
+      await speakTranslation(text);
 
-  stopCallTimer();
-  callStartTime = null;
-  callTimer.innerText = "00:00";
+    ttsLatency.innerText =
+      `${result.ttsLatencyMs} ms`;
 
-  resetPerformanceMetrics();
+    scheduleRecognitionRestart();
+  }
+);
 
-  conversationHistory.innerHTML = `
-    <div class="empty-history">
-      <div class="empty-icon">◌</div>
-      <p>No conversation yet. Start speaking to populate the live transcript history.</p>
-    </div>
-  `;
 
-  originalText.value = "";
-  translatedText.value = "";
-  setSystemStatus("History cleared", "ready");
-};
+exportTxtBtn.addEventListener(
+  "click",
+  exportSessionAsTXT
+);
 
+
+exportJsonBtn.addEventListener(
+  "click",
+  exportSessionAsJSON
+);
+
+
+clearBtn.addEventListener(
+  "click",
+  () => {
+    stopVoiceSession(false);
+
+    totalTurns = 0;
+    sessionEntries = [];
+    lastTranslatedText = "";
+
+    turnCount.innerText =
+      "0 turns";
+
+    callTimer.innerText =
+      "00:00";
+
+    resetPerformanceMetrics();
+
+    originalText.value = "";
+    translatedText.value = "";
+
+    conversationHistory.innerHTML = `
+      <div class="empty-history">
+        <div class="empty-icon">
+          ◌
+        </div>
+
+        <p>
+          No conversation yet.
+          Start speaking to populate
+          the live transcript history.
+        </p>
+      </div>
+    `;
+
+    setSystemStatus(
+      "History cleared",
+      "ready"
+    );
+  }
+);
+
+
+window.addEventListener(
+  "beforeunload",
+  () => {
+    stopVoiceSession(false);
+  }
+);
+
+
+initializeSpeechRecognition();
 setPathway("A");
-setSystemStatus("Ready", "ready");
 resetPerformanceMetrics();
+setSystemStatus("Ready", "ready");
